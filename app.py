@@ -12,6 +12,7 @@ import time
 import os
 import logging
 from logging.handlers import RotatingFileHandler
+import simple_websocket
 
 # Configure logging
 if not os.path.exists('logs'):
@@ -234,10 +235,17 @@ def stats_socket(ws):
         
         # Keep connection alive
         while True:
-            # Wait for client ping
-            message = ws.receive()
-            if message == "ping":
-                ws.send("pong")
+            try:
+                # Wait for client ping with a timeout
+                message = ws.receive(timeout=30)
+                if message == "ping":
+                    ws.send("pong")
+            except simple_websocket.errors.ConnectionClosed:
+                # Normal closure, break the loop
+                break
+            except Exception as e:
+                current_app.logger.error(f"WebSocket receive error: {str(e)}")
+                break
     except Exception as e:
         current_app.logger.error(f"WebSocket error: {str(e)}", exc_info=True)
     finally:
@@ -262,14 +270,10 @@ if __name__ == '__main__':
     websocket_thread.daemon = True
     websocket_thread.start()
     
-    # Start periodic save in another thread
+    # Start the periodic save thread
     save_thread = threading.Thread(target=periodic_save)
     save_thread.daemon = True
     save_thread.start()
     
-    # Use Werkzeug's development server only in development
-    if app.config['DEBUG']:
-        app.run(debug=True, use_reloader=False)
-    else:
-        # In production, this will be handled by Gunicorn
-        app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 4200)))
+    # Start the Flask app
+    app.run(host='0.0.0.0', port=4200, debug=app.config['DEBUG'])
