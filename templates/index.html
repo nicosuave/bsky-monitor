@@ -156,7 +156,9 @@
         }
 
         function connectWebSocket() {
-            ws = new WebSocket('ws://' + window.location.host + '/stats');
+            const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+            const path = window.location.pathname.replace(/\/+$/, '');
+            ws = new WebSocket(protocol + window.location.host + path + '/stats');
             
             ws.onopen = function() {
                 console.log('WebSocket connected');
