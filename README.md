@@ -1,6 +1,8 @@
 # bsky-monitor
 
-A web page with realtime stats of the Bluesky Firehose via the [jetstream](https://github.com/bluesky-social/jetstream).
+A buggy web page with realtime stats of the Bluesky Firehose via the [jetstream](https://github.com/bluesky-social/jetstream).
+
+You can see a demo [here](https://duckmother.nicoritschel.com/bsky).
 
 ![Application Screenshot](screenshot.png)
 

@@ -104,8 +104,15 @@
 
     <script>
         let ws;
+        let pingInterval;
         let reconnectAttempts = 0;
-        const MAX_RECONNECT_ATTEMPTS = 5;
+        let maxReconnectAttempts = 5;
+        let reconnectDelay = 1000;
+        let messageQueue = [];
+        let isProcessing = false;
+        let lastUpdateTime = Date.now();
+        const THROTTLE_INTERVAL = 50; // Update at most once per 50ms
+        const MAX_QUEUE_SIZE = 100;
 
         function formatStats(stats) {
             return stats.map(([key, value]) => {
@@ -130,80 +137,166 @@
         }
 
         function updateMetrics(data) {
-            document.getElementById('message-rate').textContent = 
-                data.current.message_rate.toFixed(1);
-            document.getElementById('last-update').textContent = 
-                data.current.last_update;
+            try {
+                document.getElementById('message-rate').textContent = 
+                    data.current.message_rate.toFixed(1);
+                document.getElementById('last-update').textContent = 
+                    data.current.last_update;
+            } catch (error) {
+                console.error('Error updating metrics:', error);
+            }
         }
 
         function updateDisplay(data) {
-            updateMetrics(data);
-            
-            const container = document.getElementById('stats-content');
-            
-            // Update current minute
-            const currentBlock = addMinuteBlock(data.current.minute, data.current.stats);
-            
-            // Create blocks for historical data
-            const historyBlocks = data.history.map(item => 
-                addMinuteBlock(item.minute, Object.entries(item.counts).sort((a, b) => b[1] - a[1]))
-            );
-            
-            // Clear and rebuild the display
-            container.innerHTML = '';
-            container.appendChild(currentBlock);
-            historyBlocks.reverse().forEach(block => container.appendChild(block));
-        }
-
-        function connectWebSocket() {
-            const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
-            const path = window.location.pathname.replace(/\/+$/, '');
-            ws = new WebSocket(protocol + window.location.host + path + '/stats');
-            
-            ws.onopen = function() {
-                console.log('WebSocket connected');
-                reconnectAttempts = 0;
-                // Start sending periodic pings
-                startPingInterval();
-            };
-
-            ws.onmessage = function(event) {
-                const data = JSON.parse(event.data);
-                if (data === 'pong') return;
-                updateDisplay(data);
-            };
-
-            ws.onclose = function() {
-                console.log('WebSocket connection closed');
-                clearInterval(pingInterval);
-                
-                if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-                    reconnectAttempts++;
-                    console.log(`Reconnecting... Attempt ${reconnectAttempts}`);
-                    setTimeout(connectWebSocket, 5000);
-                } else {
-                    console.log('Max reconnection attempts reached. Reloading page...');
-                    setTimeout(() => window.location.reload(), 5000);
+            try {
+                const now = Date.now();
+                if (now - lastUpdateTime < THROTTLE_INTERVAL) {
+                    return; // Skip update if too soon
                 }
-            };
+                lastUpdateTime = now;
 
-            ws.onerror = function(error) {
-                console.error('WebSocket error:', error);
-            };
+                updateMetrics(data);
+                
+                const container = document.getElementById('stats-content');
+                if (!container) return;
+
+                // Create document fragment for better performance
+                const fragment = document.createDocumentFragment();
+                
+                // Update current minute
+                fragment.appendChild(addMinuteBlock(data.current.minute, data.current.stats));
+                
+                // Create blocks for historical data (limit to last 10 for performance)
+                data.history.slice(0, 10).reverse().forEach(item => {
+                    fragment.appendChild(
+                        addMinuteBlock(item.minute, Object.entries(item.counts).sort((a, b) => b[1] - a[1]))
+                    );
+                });
+                
+                // Efficiently update DOM
+                requestAnimationFrame(() => {
+                    container.innerHTML = '';
+                    container.appendChild(fragment);
+                });
+            } catch (error) {
+                console.error('Error updating display:', error);
+            }
         }
 
-        let pingInterval;
+        async function processMessageQueue() {
+            if (isProcessing || messageQueue.length === 0) return;
+            
+            isProcessing = true;
+            try {
+                while (messageQueue.length > 0) {
+                    const data = messageQueue.shift();
+                    await new Promise(resolve => requestAnimationFrame(resolve));
+                    updateDisplay(data);
+                }
+            } catch (error) {
+                console.error('Error processing message queue:', error);
+            } finally {
+                isProcessing = false;
+            }
+        }
+
+        function cleanupOldData() {
+            try {
+                const container = document.querySelector('.terminal');
+                if (!container) return;
+                
+                const blocks = container.querySelectorAll('.minute-block');
+                if (blocks.length > 10) { // Keep only last 10 blocks for better performance
+                    for (let i = 0; i < blocks.length - 10; i++) {
+                        blocks[i].remove();
+                    }
+                }
+            } catch (error) {
+                console.error('Error cleaning up old data:', error);
+            }
+        }
+
         function startPingInterval() {
-            // Send ping every 30 seconds
+            if (pingInterval) {
+                clearInterval(pingInterval);
+            }
             pingInterval = setInterval(() => {
-                if (ws.readyState === WebSocket.OPEN) {
-                    ws.send('ping');
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'ping' }));
                 }
             }, 30000);
         }
 
+        function connectWebSocket() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close();
+            }
+
+            ws = new WebSocket(`ws://${window.location.host}/stats`);
+
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+                reconnectAttempts = 0;
+                reconnectDelay = 1000;
+                startPingInterval();
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'pong') return;
+
+                    // Queue management
+                    messageQueue.push(data);
+                    if (messageQueue.length > MAX_QUEUE_SIZE) {
+                        messageQueue = messageQueue.slice(-MAX_QUEUE_SIZE); // Keep only latest messages
+                    }
+                    
+                    // Process queue
+                    if (!isProcessing) {
+                        processMessageQueue();
+                    }
+                } catch (error) {
+                    console.error('Error processing message:', error);
+                }
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+
+            ws.onclose = (event) => {
+                console.log('WebSocket closed:', event.code, event.reason);
+                clearInterval(pingInterval);
+                
+                if (reconnectAttempts < maxReconnectAttempts) {
+                    console.log(`Reconnecting in ${reconnectDelay/1000} seconds...`);
+                    setTimeout(() => {
+                        reconnectAttempts++;
+                        reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+                        connectWebSocket();
+                    }, reconnectDelay);
+                } else {
+                    console.error('Max reconnection attempts reached');
+                    document.getElementById('last-update').textContent = 'Connection lost - Please refresh page';
+                }
+            };
+        }
+
         // Initial connection
         connectWebSocket();
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (ws) {
+                ws.close();
+            }
+            if (pingInterval) {
+                clearInterval(pingInterval);
+            }
+            messageQueue = [];
+            isProcessing = false;
+        });
     </script>
 </body>
 </html>
