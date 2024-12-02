@@ -2,7 +2,7 @@
 
 A (buggy) web page with realtime stats of the Bluesky Firehose via the [jetstream](https://github.com/bluesky-social/jetstream).
 
-You can see a demo [here](https://duckmother.nicoritschel.com/bsky). Might be down though because productionizing a websocket server is not my idea of fun. Sorry, no refunds.
+You can see a demo [here](https://bsky.nicoritschel.com). Might be down though because productionizing a websocket server is not my idea of fun. Sorry, no refunds.
 
 ![Application Screenshot](screenshot.png)
 
