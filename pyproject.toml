@@ -1,5 +1,5 @@
 [project]
-name = "windsurf-project"
+name = "bsky-monitor"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -9,4 +9,6 @@ dependencies = [
     "flask>=3.1.0",
     "python-dateutil>=2.9.0.post0",
     "websockets>=14.1",
+    "gunicorn>=21.2.0",
+    "gevent>=24.11.1",
 ]

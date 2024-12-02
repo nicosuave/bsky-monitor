@@ -1,4 +1,4 @@
-from flask import Flask, render_template
+from flask import Flask, render_template, current_app
 import asyncio
 import websockets
 import json
@@ -10,15 +10,43 @@ import operator
 import weakref
 import time
 import os
+import logging
+from logging.handlers import RotatingFileHandler
 
+# Configure logging
+if not os.path.exists('logs'):
+    os.makedirs('logs')
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
+)
+file_handler = RotatingFileHandler('logs/bsky_monitor.log', maxBytes=10240000, backupCount=10)
+file_handler.setFormatter(logging.Formatter(
+    '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
+))
+file_handler.setLevel(logging.INFO)
+
+# Initialize Flask app with configuration
 app = Flask(__name__)
+app.config.update(
+    SECRET_KEY=os.environ.get('SECRET_KEY', 'dev'),
+    STATS_FILE=os.environ.get('STATS_FILE', 'firehose_stats.json'),
+    MAX_MINUTES=int(os.environ.get('MAX_MINUTES', 10)),
+    WS_HOST=os.environ.get('WS_HOST', 'wss://jetstream2.us-west.bsky.network/subscribe'),
+    DEBUG=os.environ.get('FLASK_DEBUG', '0') == '1'
+)
+
+app.logger.addHandler(file_handler)
 sock = Sock(app)
 
-STATS_FILE = 'firehose_stats.json'
+STATS_FILE = app.config['STATS_FILE']
+MAX_MINUTES = app.config['MAX_MINUTES']
 
 # Store multiple minutes of data
 minutes_data = []
-MAX_MINUTES = 10
+# Last broadcast timestamp
+last_broadcast = 0
 
 # Global state to store message counts
 current_minute_stats = {
@@ -136,7 +164,8 @@ async def broadcast_to_clients():
         active_connections.discard(ws)
 
 async def process_messages():
-    uri = "wss://jetstream2.us-west.bsky.network/subscribe"
+    global last_broadcast
+    uri = app.config['WS_HOST']
     while True:
         try:
             async with websockets.connect(uri) as websocket:
@@ -144,10 +173,14 @@ async def process_messages():
                     message = await websocket.recv()
                     message_times.append(time.time())
                     process_message(json.loads(message))
-                    # Broadcast updates to clients
-                    await broadcast_to_clients()
+                    
+                    # Throttle broadcasts to once every 50ms
+                    current_time = time.time()
+                    if current_time - last_broadcast >= 0.05:  # 50ms = 0.05s
+                        await broadcast_to_clients()
+                        last_broadcast = current_time
         except Exception as e:
-            print(f"WebSocket error: {e}")
+            current_app.logger.error(f"WebSocket error: {str(e)}", exc_info=True)
             await asyncio.sleep(5)
 
 def process_message(message):
@@ -206,31 +239,37 @@ def stats_socket(ws):
             if message == "ping":
                 ws.send("pong")
     except Exception as e:
-        print(f"WebSocket error: {e}")
+        current_app.logger.error(f"WebSocket error: {str(e)}", exc_info=True)
     finally:
         # Clean up connection
         active_connections.discard(ws)
 
 def run_websocket():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
-    # Create tasks for message processing and periodic saving
-    tasks = [
-        loop.create_task(process_messages()),
-        loop.create_task(periodic_save())
-    ]
-    
-    # Run all tasks concurrently
-    loop.run_until_complete(asyncio.gather(*tasks))
+    try:
+        asyncio.run(process_messages())
+    except Exception as e:
+        current_app.logger.error(f"WebSocket error: {str(e)}", exc_info=True)
+        # Add a small delay before reconnecting
+        time.sleep(5)
+        run_websocket()
 
 if __name__ == '__main__':
     # Load existing stats before starting
     load_stats_from_disk()
     
-    # Start WebSocket client in a separate thread
-    websocket_thread = threading.Thread(target=run_websocket, daemon=True)
+    # Start the WebSocket client in a separate thread
+    websocket_thread = threading.Thread(target=run_websocket)
+    websocket_thread.daemon = True
     websocket_thread.start()
     
-    # Run Flask app
-    app.run(debug=True, host='0.0.0.0', port=4200)
+    # Start periodic save in another thread
+    save_thread = threading.Thread(target=periodic_save)
+    save_thread.daemon = True
+    save_thread.start()
+    
+    # Use Werkzeug's development server only in development
+    if app.config['DEBUG']:
+        app.run(debug=True, use_reloader=False)
+    else:
+        # In production, this will be handled by Gunicorn
+        app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 4200)))
