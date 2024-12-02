@@ -1,4 +1,8 @@
-# Flask Web Application
+# bsky-monitor
+
+A web page with realtime stats of the Bluesky Firehose via the [jetstream](https://github.com/bluesky-social/jetstream).
+
+![Application Screenshot](screenshot.png)
 
 ## Setup Instructions
 
@@ -19,8 +23,6 @@ uv run app.py
 ```
 
 ## Project Structure
-![Application Screenshot](screenshot.png)
-
 - `app.py`: Main Flask application
 - `templates/`: HTML templates
 - `pyproject.toml`: Project configuration and dependencies
