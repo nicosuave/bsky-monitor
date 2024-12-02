@@ -25,6 +25,7 @@ uv run app.py
 ```
 
 4. Access the application
+
 You can now visit localhost:4200
 
 ## Project Structure
