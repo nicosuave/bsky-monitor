@@ -232,7 +232,11 @@
                 ws.close();
             }
 
-            ws = new WebSocket(`ws://${window.location.host}/stats`);
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            // Get the base path from the current URL, ensuring it ends with a slash
+            const basePath = window.location.pathname.replace(/\/+$/, '');
+            const wsPath = `${basePath}/stats`.replace('//', '/'); // Ensure no double slashes
+            ws = new WebSocket(`${wsProtocol}//${window.location.host}${wsPath}`);
 
             ws.onopen = () => {
                 console.log('WebSocket connected');
