@@ -18,14 +18,14 @@ if not os.path.exists('logs'):
     os.makedirs('logs')
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.ERROR,
     format='%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
 )
 file_handler = RotatingFileHandler('logs/bsky_monitor.log', maxBytes=10240000, backupCount=10)
 file_handler.setFormatter(logging.Formatter(
     '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
 ))
-file_handler.setLevel(logging.INFO)
+file_handler.setLevel(logging.ERROR)
 
 # Initialize Flask app with configuration
 app = Flask(__name__)
